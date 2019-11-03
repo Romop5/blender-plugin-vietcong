@@ -20,6 +20,7 @@ import struct
 import bpy
 import functools
 from bpy_extras.io_utils import ImportHelper
+from bpy_extras.object_utils import object_data_add
 from bpy.props import StringProperty, CollectionProperty, IntProperty, BoolProperty
 from mathutils import Euler, Vector
 
@@ -27,7 +28,7 @@ bl_info = {
     "name"       : "Vietcong BES (.bes)",
     "author"     : "Jan Havran",
     "version"    : (0, 3),
-    "blender"    : (2, 70, 0),
+    "blender"    : (2, 80, 0),
     "location"   : "File > Import > BES (.bes)",
     "description": "Import Vietcong BES files",
     "wiki_url"   : "https://github.com/OpenVietcong/blender-plugin-vietcong",
@@ -611,17 +612,17 @@ class BESImporter(bpy.types.Operator, ImportHelper):
         layout.prop(self, "dir_ext_ignore")
 
         # Row for adding/removing dirs where may be located textures
-        row = layout.row(True)
-        row.label("Search directories for textures")
+        row = layout.row(align=True)
+        row.label(text="Search directories for textures")
 
         # Add AddDirs operator into row and fill its props
-        props = row.operator(AddDirs.bl_idname, icon='ZOOMIN', text="")
+        props = row.operator(AddDirs.bl_idname, icon='ZOOM_IN', text="")
         for f in self.dirs:
             item = props.dir_paths.add()
             item.name = os.path.join(self.directory, f.name)
 
         # Add RemoveDir operator into row and fill its props
-        props = row.operator(RemoveDir.bl_idname, icon='ZOOMOUT', text="")
+        props = row.operator(RemoveDir.bl_idname, icon='ZOOM_OUT', text="")
         props.index = self.tex_dirs_index
 
         # Show 'tex_dirs' items as a rows in widget list
@@ -660,12 +661,14 @@ class BESImporter(bpy.types.Operator, ImportHelper):
                 for mat in bes_roots.materials:
                     name = mat.name if isinstance(mat, BESPteroMat) else "bitmap"
                     bpy_mat = bpy.data.materials.new(name)
-                    bpy_mat.use_transparency = mat.transparent
-                    bpy_mat.alpha = 0.0 if mat.transparent else bpy_mat.alpha
+                    #bpy_mat.use_transparency = mat.transparent
+                    #bpy_mat.alpha = 0.0 if mat.transparent else bpy_mat.alpha
                     bpy_materials.append(bpy_mat)
 
                     # Create textures
                     for idx, tex in enumerate(mat.textures):
+                        # TODO: fix texture loading using tree nodes (shaders)
+                        continue
                         tex_file = tex.file_name
                         bpy_tex = bpy.data.textures.new(os.path.splitext(tex_file)[0], 'IMAGE')
                         tex_paths = []
@@ -693,7 +696,7 @@ class BESImporter(bpy.types.Operator, ImportHelper):
                         else:
                             self.report({'WARNING'}, "Texture '{}' not found".format(tex_file))
 
-                        slot = bpy_mat.texture_slots.add()
+                        slot = bpy_mat.texture_paint_slots.add()
                         slot.texture = bpy_tex
                         slot.use_map_alpha = tex.use_alpha
                         slot.alpha_factor = 1.0 if tex.use_alpha else slot.alpha_factor
@@ -702,11 +705,11 @@ class BESImporter(bpy.types.Operator, ImportHelper):
 
                 # Create objects
                 for bes_obj in bes_roots.children:
-                    self.add_object(bes_obj, bpy_materials, bes_roots.materials, None)
+                    self.add_object(context,bes_obj, bpy_materials, bes_roots.materials, None)
 
         return {'FINISHED'}
 
-    def add_object(self, bes_obj, bpy_mats, bes_mats, parent):
+    def add_object(self,context,bes_obj, bpy_mats, bes_mats, parent):
         # Create new object
         bpy_obj = bpy.data.objects.new(bes_obj.name, None)
         bpy_obj.parent = parent
@@ -725,7 +728,15 @@ class BESImporter(bpy.types.Operator, ImportHelper):
             # Create new object from mesh and add it into scene
             mesh_obj = bpy.data.objects.new(mesh_name, bpy_mesh)
             mesh_obj.parent = bpy_obj
-            bpy.context.scene.objects.link(mesh_obj)
+            # Deprecated in 2.8: bpy.context.scene.objects.link(mesh_obj)
+
+            scene = context.scene
+            layer = context.view_layer
+            layer_collection = context.layer_collection or layer.active_layer_collection
+            scene_collection = layer_collection.collection
+
+            scene_collection.objects.link(mesh_obj)
+
 
             # Apply translation, rotation and scale
             mesh_obj.location = bes_obj.translation
@@ -738,7 +749,8 @@ class BESImporter(bpy.types.Operator, ImportHelper):
             bpy_mesh.update(calc_edges = True)
 
             # Assign material to object
-            if bes_mesh.material != BESMaterial.NoneMaterial:
+            # TODO: fix material binding
+            if 1==0 and bes_mesh.material != BESMaterial.NoneMaterial:
                 mesh_obj.data.materials.append(bpy_mats[bes_mesh.material])
 
                 # Apply UV mapping
@@ -767,7 +779,15 @@ class BESImporter(bpy.types.Operator, ImportHelper):
             self.add_object(bes_child, bpy_mats, bes_mats, bpy_obj)
 
         # Add object into scene
-        bpy.context.scene.objects.link(bpy_obj)
+        # Deprecated: bpy.context.scene.objects.link(bpy_obj)
+        scene = context.scene
+        layer = context.view_layer
+        layer_collection = context.layer_collection or layer.active_layer_collection
+        scene_collection = layer_collection.collection
+        scene_collection.objects.link(bpy_obj)
+        
+
+
 
 def get_case_insensitive_path(dirname, tex, tex_exts = []):
     """
@@ -808,13 +828,26 @@ def sort_ext(a, b):
 def menu_import_bes(self, context):
     self.layout.operator(BESImporter.bl_idname, text="BES (.bes)")
 
+
+bl_class_list = (
+    AddDirs,
+    RemoveDir,
+    BESImporter,
+)
+
 def register():
-    bpy.utils.register_module(__name__)
-    bpy.types.INFO_MT_file_import.append(menu_import_bes)
+    #bpy.utils.register_module(__name__)
+    from bpy.utils import register_class
+    for cls in bl_class_list:
+        register_class(cls)
+    bpy.types.TOPBAR_MT_file_import.append(menu_import_bes)
 
 def unregister():
-    bpy.utils.unregister_module(__name__)
-    bpy.types.INFO_MT_file_import.remove(menu_import_bes)
+    #bpy.utils.unregister_module(__name__)
+    from bpy.utils import unregister_class
+    for cls in reversed(bl_class_list):
+        unregister_class(cls)
+    bpy.types.TOPBAR_MT_file_import.remove(menu_import_bes)
 
 if __name__ == "__main__":
     register()
